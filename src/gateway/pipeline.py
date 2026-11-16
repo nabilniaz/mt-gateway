@@ -20,6 +20,7 @@ from starlette.background import BackgroundTask
 from gateway.audit import AuditRecord, truncate
 from gateway.auth import Claims, TokenService, bearer_token
 from gateway.breaker import BreakerRegistry, CircuitBreaker
+from gateway.canary import choose_upstream
 from gateway.config import Settings
 from gateway.errors import GatewayError, error_response, from_error
 from gateway.models import BreakerConfig, Route, RoutesFile, Tenant, TenantsFile
@@ -189,11 +190,12 @@ class Gateway:
                 headers={"Retry-After": str(quota.retry_after), **_quota_headers(quota)},
             )
 
-        # 9. Pick the upstream.
-        upstream = route.upstream
-        record.upstream = upstream
+        # 9. Pick the upstream: primary, or the canary for a deterministic share of requests.
+        upstream, is_canary = choose_upstream(route, tenant.tenant_id, record.request_id)
+        record.upstream, record.canary = upstream, is_canary
 
-        # 10. Circuit breaker: fail fast instead of piling onto a failing upstream.
+        # 10. Circuit breaker: fail fast instead of piling onto a failing upstream. The canary
+        # has its own breaker; an open canary returns 503 rather than silently falling back.
         breaker = self.breakers.get(upstream, route.circuit_breaker or self._default_breaker())
         if not breaker.allow():
             raise GatewayError(

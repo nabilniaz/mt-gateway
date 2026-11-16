@@ -450,3 +450,48 @@ async def test_connect_errors_trip_default_breaker(h: Harness, audit: list[dict[
     line = requests_in(audit)[-1]
     assert (line["status"], line["reason"], line["decision"]) == (503, "circuit_open", "deny")
     assert line["upstream"] == "http://down.test"
+
+
+# --- canary -----------------------------------------------------------------------------------
+
+
+async def _add_canary_route(h: Harness, **canary: Any) -> None:
+    body = {
+        "prefix": "/canary",
+        "upstream": "http://primary.test/v1",
+        "canary": {"upstream": "http://canary.test/v2", **canary},
+    }
+    assert (await h.admin("PUT", "/admin/routes/canary", json=body)).status_code == 201
+
+
+async def test_canary_split_and_audit(h: Harness, audit: list[dict[str, Any]]) -> None:
+    await _add_canary_route(h, percent=30)
+    seen = [(await h.get("/canary/x")).json()["upstream"] for _ in range(300)]
+    share = seen.count("canary") / len(seen)
+    assert 0.18 < share < 0.42
+    lines = requests_in(audit)
+    for line, upstream in zip(lines, seen, strict=True):
+        assert line["canary"] is (upstream == "canary")
+        assert line["upstream"] == (
+            "http://canary.test/v2" if upstream == "canary" else "http://primary.test/v1"
+        )
+
+
+async def test_canary_only_for_listed_tenants(h: Harness) -> None:
+    await _add_canary_route(h, percent=100, tenants=["acme"])
+    assert (await h.get("/canary/x")).json()["upstream"] == "canary"
+    assert (await h.get("/canary/x", token=h.token("globex"))).json()["upstream"] == "primary"
+
+
+async def test_canary_has_its_own_breaker_and_does_not_fall_back(h: Harness) -> None:
+    body = {
+        "prefix": "/canary",
+        "upstream": "http://primary.test/v1",
+        "canary": {"upstream": "http://down.test", "percent": 100},
+    }
+    await h.admin("PUT", "/admin/routes/canary", json=body)
+    for _ in range(5):
+        assert (await h.get("/canary/x")).status_code == 502
+    assert_error(await h.get("/canary/x"), 503, "circuit_open")
+    assert h.calls["primary.test"] == 0  # no silent fallback to the primary
+    assert (await h.get("/echo/x")).status_code == 200  # primary's breaker is unaffected
