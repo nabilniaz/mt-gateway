@@ -168,6 +168,7 @@ After that, every push to `main` redeploys. The spec uses two `apps-s-1vcpu-0.5g
 7. The gateway does not inspect request-body content.
 8. A failing canary is not rolled back automatically.
 9. Runtime admin changes are lost on restart until committed to the seed files.
+10. On App Platform, the platform's edge replaces 502/503/504 bodies with an HTML page and sends status 504; the original status is in the `x-do-orig-status` header.
 
 The full reasoning, per threat, is in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 

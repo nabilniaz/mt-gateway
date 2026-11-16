@@ -273,6 +273,8 @@ doctl apps logs <app-id> gateway --type run --follow
 | Terminates HTTPS and forwards to the container over HTTP | TLS needs no code; `TRUST_PROXY_HEADERS=true` lets the gateway read the real client IP. |
 | Gives each component a private hostname inside the app | `demo-upstream` is reachable at `http://demo-upstream:8080` and explicitly allowlisted past the SSRF guard. |
 | Stores secrets as encrypted env vars | Signing keys come only from env vars, never files in the image. |
+| Its edge resolves `.` and `..` segments (including `%2e%2e`) before forwarding | `/echo/../admin` reaches the gateway as `/admin` and is refused by the allowlist (403) instead of the path check (400). Still blocked; encoded slashes, double encoding and control characters do reach the gateway and get 400. |
+| Its edge replaces any 502, 503 or 504 response with DigitalOcean's own HTML error page, sent as 504 | On the live URL, `upstream_error`, `circuit_open` and `upstream_timeout` arrive as status 504 with an HTML body. The real status is in the `x-do-orig-status` header, `Retry-After` and `X-Request-ID` survive, and the audit log records the true code. Verified against the live deployment; locally and in Docker the JSON error contract is unchanged. |
 | Deploys automatically on push to the connected GitHub branch | CI must pass on GitHub before merging to `main`, so a broken build never ships. |
 
 ## Error contract
@@ -304,6 +306,8 @@ Every error the gateway itself produces has the same JSON body and an `X-Request
 | 500 | `internal_error` | Unexpected gateway bug; details go to the log only | Maybe |
 
 `message` is for humans and may change. Clients should branch on `code`.
+
+On DigitalOcean App Platform, the platform's edge swaps the body of every 502, 503 and 504 for its own HTML page and sends status 504; the gateway's status is kept in the `x-do-orig-status` response header (see the DigitalOcean fit check).
 
 ## Data models
 

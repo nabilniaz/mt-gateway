@@ -26,7 +26,7 @@ PY
 app_name=$(awk '/^name:/ {print $2; exit}' .do/app.yaml)
 app_id=$(doctl apps list --format ID,Spec.Name --no-header | awk -v n="$app_name" '$2 == n {print $1}')
 if [ -z "$app_id" ]; then
-  echo "$spec" | doctl apps create --spec - --wait --format ID,DefaultIngress,Phase
+  echo "$spec" | doctl apps create --spec - --wait --format ID,DefaultIngress
 else
-  echo "$spec" | doctl apps update "$app_id" --spec - --wait --format ID,DefaultIngress,Phase
+  echo "$spec" | doctl apps update "$app_id" --spec - --wait --format ID,DefaultIngress
 fi
