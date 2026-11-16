@@ -60,14 +60,23 @@ async def validate_upstream(
         return
 
     try:
-        addresses = await resolver(host, port or (443 if parts.scheme == "https" else 80))
-    except OSError:
-        raise UnsafeUpstream(f"upstream host {host!r} does not resolve") from None
-    if not addresses:
-        raise UnsafeUpstream(f"upstream host {host!r} does not resolve")
+        ipaddress.ip_address(host)
+        addresses = [host]  # an IP literal needs no lookup
+    except ValueError:
+        addresses = await _resolve(resolver, host, port or (443 if parts.scheme == "https" else 80))
     for address in addresses:
         if not is_public_ip(address):
             raise UnsafeUpstream(
                 f"upstream host {host!r} resolves to non-public address {address}; "
                 "add it to UPSTREAM_ALLOWED_PRIVATE_HOSTS if this is intended"
             )
+
+
+async def _resolve(resolver: Resolver, host: str, port: int) -> list[str]:
+    try:
+        addresses = await resolver(host, port)
+    except OSError:
+        raise UnsafeUpstream(f"upstream host {host!r} does not resolve") from None
+    if not addresses:
+        raise UnsafeUpstream(f"upstream host {host!r} does not resolve")
+    return addresses

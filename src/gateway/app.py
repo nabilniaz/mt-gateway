@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from gateway.admin import router as admin_router
 from gateway.audit import configure_logging
 from gateway.config import Settings
 from gateway.errors import GatewayError, error_response, from_error
@@ -103,6 +104,8 @@ def create_app(settings: Settings | None = None, *, gateway: Gateway | None = No
     async def _http_error(request: Request, exc: StarletteHTTPException) -> Response:
         code = {404: "not_found", 405: "method_not_allowed"}.get(exc.status_code, "http_error")
         return error_response(exc.status_code, code, str(exc.detail), request_id_of(request))
+
+    app.include_router(admin_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> dict[str, str]:
