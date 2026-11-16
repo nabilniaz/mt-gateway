@@ -1,0 +1,24 @@
+# Local stack that mirrors the DigitalOcean app: a public gateway and a private demo upstream.
+#   uv run gateway-init-env      # once: creates .env with random keys
+#   docker compose up --build    # then: curl http://localhost:8080/healthz
+services:
+  gateway:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      # Override the local-run values in .env with the in-container ones.
+      ROUTES_FILE: config/routes.json
+      UPSTREAM_ALLOWED_PRIVATE_HOSTS: demo-upstream
+    depends_on:
+      demo-upstream:
+        condition: service_healthy
+    stop_grace_period: 25s
+
+  demo-upstream:
+    build: .
+    command: ["demo-upstream"]
+    environment:
+      UPSTREAM_NAME: demo-upstream
+    # No `ports:` - like on App Platform, only the gateway can reach it.
