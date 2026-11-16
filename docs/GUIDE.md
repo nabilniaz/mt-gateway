@@ -104,6 +104,12 @@ The route table maps path prefixes to upstream URLs and can change while the gat
 | `GET /admin/routes` | List all routes | |
 | `PUT /admin/routes/{route_id}` | Create or replace a route | 422 invalid body or unsafe upstream |
 | `DELETE /admin/routes/{route_id}` | Remove a route | 404 unknown route |
+| `GET /admin/routes/export` | Current table in `config/routes.json` format, ready to commit | |
+| `GET /admin/tenants`, `PUT /admin/tenants/{tenant_id}` | List tenants; create, change or disable one | 422 invalid body |
+| `POST /admin/tokens`, `POST /admin/tokens/revoke` | Issue a tenant token; revoke one by `jti` | 422 unknown tenant or over-grant |
+| `GET /admin/upstreams` | Circuit-breaker state per upstream | |
+
+Interactive API docs for these endpoints are served at `/admin/docs`. Route prefixes may not be `/` or overlap the gateway's own paths (`/admin`, `/healthz`).
 
 Each upstream URL is validated on write: `http` or `https` only, no credentials in the URL, and the host must not resolve to a private, loopback, link-local or cloud-metadata address. See the SSRF threat in [THREAT_MODEL.md](THREAT_MODEL.md).
 
@@ -161,11 +167,11 @@ Every inbound request produces exactly one JSON line on stdout, including reques
 | `tenant_id` | Resolved tenant (from the verified token) | `null` before auth succeeds |
 | `path` | The normalized path, or the raw path truncated to 512 characters if normalization failed | never |
 | `upstream` | Base URL of the upstream chosen (primary or canary) | `null` if rejected before routing |
-| `decision` | `allow`, `deny` or `error` | never |
+| `decision` | `allow` (the upstream answered, whatever its status), `deny` (the gateway refused: 4xx or 503 `circuit_open`), `error` (502, 504 or a gateway bug) | never |
 | `reason` | Machine code such as `rate_limited`, `circuit_open` | `null` on allow |
 | `upstream_status` | Status the upstream returned | `null` if never called, or on 502/504 |
 | `status` | Status the gateway returned to the caller | never |
-| `latency_ms` | Total wall time inside the gateway | never |
+| `latency_ms` | Wall time inside the gateway until the response headers are ready (the body then streams) | never |
 
 **Never logged:** the `Authorization` header or any token, request or response bodies, query strings (they often carry secrets), or cookies.
 
@@ -235,7 +241,7 @@ The gateway deploys to DigitalOcean App Platform straight from the GitHub repo, 
 | Component | Built from | Reachable from | Purpose |
 | --- | --- | --- | --- |
 | `gateway` | `Dockerfile` | The internet, over HTTPS at the app's `ondigitalocean.app` URL | The API gateway |
-| `demo-upstream` | `upstream/Dockerfile` | Only inside the app, at `http://demo-upstream:8080` | A tiny echo service to prove routing, canary and breaker behavior |
+| `demo-upstream` | The same `Dockerfile`, with `run_command: demo-upstream` | Only inside the app, at `http://demo-upstream:8080` | A tiny echo service to prove routing, canary and breaker behavior |
 
 A third, public upstream (`https://httpbin.org`) is configured as a route too, to show proxying to a real external API.
 
@@ -245,7 +251,7 @@ A third, public upstream (`https://httpbin.org`) is configured as a route too, t
 4. Logs (including every audit line) appear under the app's Runtime Logs and can be forwarded to a log service.
 
 ```bash
-doctl apps create --spec .do/app.yaml
+./scripts/deploy_do.sh               # create or update the app from .do/app.yaml
 doctl apps list
 doctl apps logs <app-id> gateway --type run --follow
 ```
@@ -293,7 +299,7 @@ Every error the gateway itself produces has the same JSON body and an `X-Request
 | 422 | `validation_error` | Admin API body is invalid, or upstream URL is unsafe | No |
 | 429 | `rate_limited` | Tenant quota exhausted; includes `Retry-After` | No |
 | 502 | `upstream_error` | Could not connect to upstream, or it sent an invalid response | Attempted |
-| 503 | `circuit_open` | The upstream's breaker is open, or no half-open probe slot is free | No |
+| 503 | `circuit_open` | The upstream's breaker is open, or no half-open probe slot is free; includes `Retry-After` | No |
 | 504 | `upstream_timeout` | Upstream did not answer within the timeout (default 10 s read) | Yes |
 | 500 | `internal_error` | Unexpected gateway bug; details go to the log only | Maybe |
 

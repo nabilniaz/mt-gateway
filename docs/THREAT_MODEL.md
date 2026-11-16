@@ -35,3 +35,4 @@ The design is secure for a single-instance deployment behind TLS, with upstreams
 6. **Symmetric signing (HS256)** means any service that verifies tokens can also mint them. Fine while the gateway is the only verifier; switch to an asymmetric algorithm (EdDSA or ES256) if other services verify tokens.
 7. **No request-body inspection.** The gateway enforces size, not content; payload validation is the upstream's job.
 8. **Canary failure is not automatically rolled back.** An open canary breaker returns 503 instead of falling back to the primary.
+9. **Runtime admin changes are not durable.** Route and tenant changes made through the admin API live in memory and are lost on restart or redeploy until committed to the seed files. DigitalOcean Managed Postgres or Redis would make them durable.
