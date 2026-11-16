@@ -16,8 +16,8 @@ jobs:
     name: Lint, type-check and test
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: "0.13.8"
           python-version: "3.12"
@@ -33,8 +33,8 @@ jobs:
     needs: test
     runs-on: ubuntu-24.04  # x86-64, like App Platform's builders
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: "0.13.8"
           python-version: "3.12"
