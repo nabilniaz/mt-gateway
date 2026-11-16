@@ -21,7 +21,10 @@ yaml.safe_dump(spec, sys.stdout, sort_keys=False)
 PY
 )
 
-app_id=$(doctl apps list --format ID,Spec.Name --no-header | awk '$2 == "mt-gateway" {print $1}')
+# The app name comes from the spec. In a shared team it must be unique, or this would update
+# someone else's app.
+app_name=$(awk '/^name:/ {print $2; exit}' .do/app.yaml)
+app_id=$(doctl apps list --format ID,Spec.Name --no-header | awk -v n="$app_name" '$2 == n {print $1}')
 if [ -z "$app_id" ]; then
   echo "$spec" | doctl apps create --spec - --wait --format ID,DefaultIngress,Phase
 else

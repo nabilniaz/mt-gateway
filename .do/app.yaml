@@ -1,6 +1,6 @@
 # DigitalOcean App Platform spec. Deploy with ./scripts/deploy_do.sh, which injects the two
 # SECRET values from the local, git-ignored .env.do file (they are never committed).
-name: mt-gateway
+name: mt-gateway-nabilniaz
 region: nyc
 ingress:
   rules:
