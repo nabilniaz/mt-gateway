@@ -1,0 +1,67 @@
+# DigitalOcean App Platform spec. Deploy with ./scripts/deploy_do.sh, which injects the two
+# SECRET values from the local, git-ignored .env.do file (they are never committed).
+name: mt-gateway
+region: nyc
+ingress:
+  rules:
+    - component:
+        name: gateway
+      match:
+        path:
+          prefix: /
+services:
+  - name: gateway
+    github:
+      repo: nabilniaz/mt-gateway
+      branch: main
+      deploy_on_push: true
+    source_dir: /
+    dockerfile_path: Dockerfile
+    http_port: 8080
+    # Quotas, breakers, routes and revocations live in memory: exactly one instance.
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    health_check:
+      http_path: /healthz
+      initial_delay_seconds: 5
+      period_seconds: 10
+      timeout_seconds: 2
+      failure_threshold: 3
+    envs:
+      - key: GATEWAY_JWT_KEYS
+        scope: RUN_TIME
+        type: SECRET
+      - key: GATEWAY_ADMIN_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: ROUTES_FILE
+        value: config/routes.json
+        scope: RUN_TIME
+      - key: UPSTREAM_ALLOWED_PRIVATE_HOSTS
+        value: demo-upstream
+        scope: RUN_TIME
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+        scope: RUN_TIME
+
+  # Private echo service: no http_port and no ingress rule, so it is unreachable from the
+  # internet. The gateway reaches it at http://demo-upstream:8080.
+  - name: demo-upstream
+    github:
+      repo: nabilniaz/mt-gateway
+      branch: main
+      deploy_on_push: true
+    source_dir: /
+    dockerfile_path: Dockerfile
+    run_command: demo-upstream
+    internal_ports:
+      - 8080
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    health_check:
+      http_path: /healthz
+      port: 8080
+    envs:
+      - key: UPSTREAM_NAME
+        value: demo-upstream
+        scope: RUN_TIME
