@@ -19,9 +19,10 @@ from starlette.background import BackgroundTask
 
 from gateway.audit import AuditRecord, truncate
 from gateway.auth import Claims, TokenService, bearer_token
+from gateway.breaker import BreakerRegistry, CircuitBreaker
 from gateway.config import Settings
 from gateway.errors import GatewayError, error_response, from_error
-from gateway.models import Route, RoutesFile, Tenant, TenantsFile
+from gateway.models import BreakerConfig, Route, RoutesFile, Tenant, TenantsFile
 from gateway.paths import has_prefix, normalize_path
 from gateway.proxy import downstream_response_headers, upstream_request_headers, upstream_url
 from gateway.ratelimit import RateDecision, SlidingWindowLimiter
@@ -68,6 +69,7 @@ class Gateway:
         self.resolver = resolver
         self.tokens = TokenService(settings, wall_clock)
         self.limiter = SlidingWindowLimiter(wall_clock)
+        self.breakers = BreakerRegistry(monotonic_clock)
         self._monotonic = monotonic_clock
         self._log = structlog.get_logger("gateway")
 
@@ -187,10 +189,32 @@ class Gateway:
                 headers={"Retry-After": str(quota.retry_after), **_quota_headers(quota)},
             )
 
-        # 9. Proxy.
+        # 9. Pick the upstream.
         upstream = route.upstream
         record.upstream = upstream
-        return await self._forward(request, record, route, upstream, path, body, claims, quota)
+
+        # 10. Circuit breaker: fail fast instead of piling onto a failing upstream.
+        breaker = self.breakers.get(upstream, route.circuit_breaker or self._default_breaker())
+        if not breaker.allow():
+            raise GatewayError(
+                503,
+                "circuit_open",
+                "Upstream is failing; requests are paused while it recovers.",
+                headers={"Retry-After": str(int(breaker.config.cooldown_seconds))},
+            )
+
+        # 11. Proxy.
+        return await self._forward(
+            request, record, route, upstream, breaker, path, body, claims, quota
+        )
+
+    def _default_breaker(self) -> BreakerConfig:
+        s = self.settings
+        return BreakerConfig(
+            failure_threshold=s.breaker_failure_threshold,
+            cooldown_seconds=s.breaker_cooldown_seconds,
+            half_open_max_probes=s.breaker_half_open_max_probes,
+        )
 
     async def _read_body(self, request: Request) -> bytes:
         limit = self.settings.max_body_bytes
@@ -213,6 +237,7 @@ class Gateway:
         record: AuditRecord,
         route: Route,
         upstream: str,
+        breaker: CircuitBreaker,
         path: str,
         body: bytes,
         claims: Claims,
@@ -243,12 +268,21 @@ class Gateway:
         try:
             upstream_response = await self.client.send(upstream_request, stream=True)
         except httpx.TimeoutException:
+            breaker.record_failure()
             raise GatewayError(
                 504, "upstream_timeout", "Upstream did not respond in time."
             ) from None
         except httpx.HTTPError:
+            breaker.record_failure()
             raise GatewayError(502, "upstream_error", "Could not reach the upstream.") from None
+        except BaseException:
+            breaker.release()  # cancelled (client went away) or a bug: no verdict on the upstream
+            raise
 
+        if upstream_response.status_code >= 500:
+            breaker.record_failure()
+        else:
+            breaker.record_success()
         record.upstream_status = upstream_response.status_code
         response = StreamingResponse(
             upstream_response.aiter_raw(),

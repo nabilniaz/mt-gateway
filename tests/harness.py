@@ -133,6 +133,9 @@ class Harness:
     async def get(self, path: str, token: str | None = "default", **kwargs: Any) -> httpx.Response:
         return await self.call("GET", path, token, **kwargs)
 
+    async def admin_get(self, path: str) -> httpx.Response:
+        return await self.admin("GET", path)
+
     async def admin(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         return await self.call(method, path, self.admin_token(), **kwargs)
 

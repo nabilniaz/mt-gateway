@@ -398,3 +398,55 @@ async def test_long_paths_are_truncated_in_audit(h: Harness, audit: list[dict[st
     await h.get("/echo/" + "a" * 3000)
     [line] = requests_in(audit)
     assert len(line["path"]) < 600
+
+
+# --- circuit breaker --------------------------------------------------------------------------
+
+
+async def test_breaker_opens_then_half_open_probe_recovers(h: Harness) -> None:
+    """The flaky route has failure_threshold=3, cooldown_seconds=10."""
+    token = h.token(scopes=["flaky:read"])
+    h.flaky.status = 500
+    for _ in range(3):
+        assert (await h.get("/flaky/x", token=token)).status_code == 500  # passed through
+    assert h.calls["flaky.test"] == 3
+
+    blocked = await h.get("/flaky/x", token=token)
+    assert_error(blocked, 503, "circuit_open")
+    assert blocked.headers["retry-after"] == "10"
+    assert h.calls["flaky.test"] == 3  # the open breaker did not call the upstream
+
+    health = (await h.admin_get("/admin/upstreams")).json()
+    assert health["http://flaky.test"]["state"] == "open"
+
+    h.clock.advance(10)
+    h.flaky.status = 200
+    assert (await h.get("/flaky/x", token=token)).status_code == 200  # the half-open probe
+    assert (await h.get("/flaky/x", token=token)).status_code == 200  # closed again
+    assert h.calls["flaky.test"] == 5
+
+
+async def test_failed_probe_reopens_breaker(h: Harness) -> None:
+    token = h.token(scopes=["flaky:read"])
+    for _ in range(3):
+        await h.get("/flaky/x", token=token)
+    h.clock.advance(10)
+    assert (await h.get("/flaky/x", token=token)).status_code == 500  # probe fails
+    assert_error(await h.get("/flaky/x", token=token), 503, "circuit_open")
+
+
+async def test_4xx_does_not_trip_breaker(h: Harness) -> None:
+    token = h.token(scopes=["flaky:read"])
+    h.flaky.status = 404
+    for _ in range(10):
+        assert (await h.get("/flaky/x", token=token)).status_code == 404
+
+
+async def test_connect_errors_trip_default_breaker(h: Harness, audit: list[dict[str, Any]]) -> None:
+    for _ in range(5):  # default threshold from settings
+        assert (await h.get("/down/x")).status_code == 502
+    assert_error(await h.get("/down/x"), 503, "circuit_open")
+    assert h.calls["down.test"] == 5
+    line = requests_in(audit)[-1]
+    assert (line["status"], line["reason"], line["decision"]) == (503, "circuit_open", "deny")
+    assert line["upstream"] == "http://down.test"

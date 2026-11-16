@@ -173,3 +173,12 @@ async def revoke_token(
 ) -> None:
     gateway.tokens.revocations.revoke(body.jti)
     audit_admin(_request_id(request), admin.sub, "token.revoke", body.jti)
+
+
+# --- upstream health --------------------------------------------------------------------------
+
+
+@router.get("/upstreams")
+async def upstream_health(admin: Admin, gateway: GatewayDep) -> dict[str, Any]:
+    """Circuit-breaker state for every upstream that has received traffic."""
+    return gateway.breakers.snapshot()
