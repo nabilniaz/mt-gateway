@@ -94,7 +94,8 @@ The route table maps path prefixes to upstream URLs and can change while the gat
 - The table is an immutable snapshot (a tuple of frozen route objects, pre-sorted by prefix length).
 - An admin write takes an `asyncio.Lock`, builds a brand-new snapshot, validates it, then swaps one reference. Readers never take the lock; each request grabs the current reference once at the start and uses it to the end.
 - In Python, assigning one reference is atomic, so a reader sees either the old table or the new one, never half of each. This is called copy-on-write.
-- If `ROUTES_FILE` is set, every successful write is saved there (written to a temp file and then renamed, so a crash cannot leave a half-written file). On startup the gateway loads it.
+- **Seed file:** on startup the gateway loads `config/routes.json`, which is committed to the repo. That file is the durable source of truth, and a deploy always starts from it.
+- **Runtime changes live in memory.** App Platform's container filesystem is wiped on every deploy or restart, so writing changes to a local file would silently lose them. Admin API changes take effect instantly and last until the next restart; to make one permanent, commit it to `config/routes.json`. `GET /admin/routes/export` returns the current table in that file's format. Durable runtime changes would need DigitalOcean Managed Redis or Postgres (see Known gaps).
 
 **Admin API** (requires an admin token; tenant tokens get 403)
 
@@ -253,6 +254,21 @@ doctl apps logs <app-id> gateway --type run --follow
 - **Internal upstream vs SSRF guard.** `demo-upstream` resolves to a private IP, which the SSRF guard blocks by default. The operator adds it to `UPSTREAM_ALLOWED_PRIVATE_HOSTS=demo-upstream`. That explicit, named exception is the only way to reach a private address.
 - **Client IP.** App Platform's load balancer sets the real client IP in a forwarded header. The gateway trusts that header only when `TRUST_PROXY_HEADERS=true`, which is set on DigitalOcean and off locally.
 
+**DigitalOcean fit check.** Every design choice was checked against how App Platform runs containers:
+
+| App Platform behavior | Design consequence |
+| --- | --- |
+| Builds the Dockerfile itself, on Linux x86-64 servers | Images are never built on the Mac (Apple Silicon, arm64) and pushed, so there is no CPU-architecture mismatch. CI also builds on x86-64 to catch problems early. |
+| Sends traffic to the port named in the app spec | The gateway listens on `0.0.0.0:8080`, read from the `PORT` env var with 8080 as default. |
+| Container filesystem is wiped on every deploy and restart | No state is written to disk. Routes and tenants are seeded from committed JSON files; logs go to stdout. |
+| Restarts or replaces containers that fail health checks | `/healthz` returns 200 with no dependencies, so a slow upstream cannot make the gateway look dead. |
+| Stops containers with SIGTERM before replacing them | uvicorn finishes in-flight requests before exiting (graceful shutdown). |
+| Can run several instances behind a load balancer | Pinned to `instance_count: 1`, because quotas, breakers and routes are in memory. |
+| Terminates HTTPS and forwards to the container over HTTP | TLS needs no code; `TRUST_PROXY_HEADERS=true` lets the gateway read the real client IP. |
+| Gives each component a private hostname inside the app | `demo-upstream` is reachable at `http://demo-upstream:8080` and explicitly allowlisted past the SSRF guard. |
+| Stores secrets as encrypted env vars | Signing keys come only from env vars, never files in the image. |
+| Deploys automatically on push to the connected GitHub branch | CI must pass on GitHub before merging to `main`, so a broken build never ships. |
+
 ## Error contract
 
 Every error the gateway itself produces has the same JSON body and an `X-Request-ID` header. Errors that come from the upstream are passed through untouched, so a client can tell them apart by the body shape.
@@ -303,7 +319,7 @@ Three shapes carry all the state. Each is a pydantic model, so invalid data is r
 - `allowed_paths`: normalized prefixes. Each must start with `/`.
 - `max_scopes`: the most a token for this tenant can ever carry.
 
-**Route entry** (managed through `/admin/routes`, persisted to `ROUTES_FILE`)
+**Route entry** (seeded from `config/routes.json`, managed at runtime through `/admin/routes`)
 
 ```json
 {
