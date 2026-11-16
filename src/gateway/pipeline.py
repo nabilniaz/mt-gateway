@@ -75,8 +75,14 @@ class Gateway:
         self._log = structlog.get_logger("gateway")
 
     @classmethod
-    async def from_settings(cls, settings: Settings) -> Gateway:
-        """Production wiring: load and validate the committed seed files, then build the client."""
+    async def from_settings(
+        cls, settings: Settings, resolver: Resolver = system_resolver
+    ) -> Gateway:
+        """Production wiring: load and validate the committed seed files, then build the client.
+
+        An invalid seed file stops startup. On App Platform that fails the deploy's health
+        check, so the previous version keeps serving instead of a half-configured one.
+        """
         tenants = load_tenants(settings.tenants_file)
         routes = load_routes(settings.routes_file)
         gateway = cls(
@@ -84,6 +90,7 @@ class Gateway:
             tenants=TenantStore(tenants),
             routes=RouteTable(routes),
             client=build_http_client(settings),
+            resolver=resolver,
         )
         for route in routes:
             await gateway.validate_route(route)

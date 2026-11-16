@@ -1,0 +1,46 @@
+{
+  "routes": [
+    {
+      "route_id": "echo",
+      "prefix": "/echo",
+      "upstream": "http://demo-upstream:8080/v1",
+      "required_scopes": [
+        "echo:read"
+      ],
+      "canary": {
+        "upstream": "http://demo-upstream:8080/v2",
+        "percent": 20
+      }
+    },
+    {
+      "route_id": "flaky",
+      "prefix": "/flaky",
+      "upstream": "http://demo-upstream:8080/status",
+      "required_scopes": [
+        "echo:read"
+      ],
+      "circuit_breaker": {
+        "failure_threshold": 3,
+        "cooldown_seconds": 15,
+        "half_open_max_probes": 1
+      }
+    },
+    {
+      "route_id": "slow",
+      "prefix": "/slow",
+      "upstream": "http://demo-upstream:8080/delay",
+      "required_scopes": [
+        "echo:read"
+      ],
+      "timeout_seconds": 2
+    },
+    {
+      "route_id": "httpbin",
+      "prefix": "/httpbin",
+      "upstream": "https://httpbin.org",
+      "required_scopes": [
+        "httpbin:read"
+      ]
+    }
+  ]
+}

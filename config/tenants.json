@@ -1,0 +1,25 @@
+{
+  "tenants": [
+    {
+      "tenant_id": "acme",
+      "enabled": true,
+      "allowed_paths": ["/echo", "/flaky", "/slow", "/httpbin"],
+      "rate_limit_per_minute": 60,
+      "max_scopes": ["echo:read", "echo:write", "httpbin:read"]
+    },
+    {
+      "tenant_id": "globex",
+      "enabled": true,
+      "allowed_paths": ["/echo"],
+      "rate_limit_per_minute": 5,
+      "max_scopes": ["echo:read"]
+    },
+    {
+      "tenant_id": "initech",
+      "enabled": false,
+      "allowed_paths": ["/echo"],
+      "rate_limit_per_minute": 60,
+      "max_scopes": ["echo:read"]
+    }
+  ]
+}
